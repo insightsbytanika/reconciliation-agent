@@ -1,5 +1,6 @@
 """
 Reconciliation Agent
+----------------------
 This is where AI actually comes in - but ONLY for reasoning, never for numbers.
 
 For every exception the matching engine couldn't resolve (mismatch, missing,
@@ -20,8 +21,8 @@ Routing rule (multi-factor, not just confidence):
 
 import os
 import json
+import requests
 import pandas as pd
-import google.generativeai as genai
 from dotenv import load_dotenv
 
 # -------------------------------------------------------------------
@@ -33,8 +34,18 @@ api_key = os.getenv("GEMINI_API_KEY")
 if not api_key:
     raise ValueError("GEMINI_API_KEY not found. Check your .env file.")
 
-genai.configure(api_key=api_key)
-model = genai.GenerativeModel("gemini-2.0-flash")
+GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
+
+def call_gemini(prompt):
+    """Sends a prompt to Gemini via a direct REST call (no heavy SDK needed)."""
+    response = requests.post(
+        GEMINI_URL,
+        headers={"Content-Type": "application/json"},
+        json={"contents": [{"parts": [{"text": prompt}]}]},
+    )
+    response.raise_for_status()  # raises an error if the request failed
+    data = response.json()
+    return data["candidates"][0]["content"]["parts"][0]["text"]
 
 # -------------------------------------------------------------------
 # Step 2: "Tools" the agent can use
@@ -93,10 +104,10 @@ Respond ONLY with valid JSON in this exact format, no extra text:
   "cited_rule": "the specific logic/rule backing this conclusion, or 'none' if you cannot cite one"
 }}
 """
-    response = model.generate_content(prompt)
+    response_text = call_gemini(prompt)
 
     # Clean up response in case Gemini wraps it in markdown code fences
-    text = response.text.strip()
+    text = response_text.strip()
     text = text.replace("```json", "").replace("```", "").strip()
 
     try:
