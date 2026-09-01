@@ -1,0 +1,6 @@
+.env
+*.key
+Master_Project_Plan.md
+PRD_Reconciliation_Agent.md
+venv/
+__pycache__/
