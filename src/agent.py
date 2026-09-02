@@ -1,62 +1,73 @@
 """
 Reconciliation Agent
-----------------------
-This is where AI actually comes in - but ONLY for reasoning, never for numbers.
-
+This is where AI actually comes in - but only for reasoning, never for numbers.
 For every exception the matching engine couldn't resolve (mismatch, missing,
 duplicate), this agent:
     1. Looks up extra context about the transaction (using "tools")
-    2. Asks Gemini to reason about WHY the exception happened
+    2. Asks an LLM to reason about WHY the exception happened
     3. Gets back a confidence score + a cited reason
     4. Decides: auto-resolve it, or send it to a human for review
 
-Routing rule (multi-factor, not just confidence):
-    Auto-resolve ONLY if:
+Routing rule:
+    Auto-resolve only if:
         - confidence is high (>= 80)
         - amount is below a risk threshold (so big-money cases always get a
           second look, even if the AI feels confident)
-        - the AI actually cited a concrete reason (not a vague guess)
+        -the AI actually cited a concrete reason (not a random guess)
     Otherwise -> flagged for human review.
 """
 
 import os
 import json
+import time
 import requests
 import pandas as pd
 from dotenv import load_dotenv
 
-# -------------------------------------------------------------------
+
 # Step 1: Load the API key from .env (never hardcoded in the file)
-# -------------------------------------------------------------------
+
 load_dotenv()  # reads the .env file and loads its variables
-api_key = os.getenv("GEMINI_API_KEY")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
-if not api_key:
-    raise ValueError("GEMINI_API_KEY not found. Check your .env file.")
+if not GROQ_API_KEY:
+    raise ValueError("GROQ_API_KEY not found. Check your .env file.")
 
-GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
+GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 
-def call_gemini(prompt):
-    """Sends a prompt to Gemini via a direct REST call (no heavy SDK needed)."""
-    response = requests.post(
-        GEMINI_URL,
-        headers={"Content-Type": "application/json"},
-        json={"contents": [{"parts": [{"text": prompt}]}]},
-    )
-    response.raise_for_status()  # raises an error if the request failed
-    data = response.json()
-    return data["candidates"][0]["content"]["parts"][0]["text"]
+def call_llm(prompt, retries=3):
+    """Sends a prompt to Groq's chat completion API (OpenAI-compatible format).
+    Retries automatically if we hit a rate limit (HTTP 429)."""
+    for attempt in range(retries):
+        response = requests.post(
+            GROQ_URL,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {GROQ_API_KEY}",
+            },
+            json={
+                "model": "openai/gpt-oss-20b",
+                "messages": [{"role": "user", "content": prompt}],
+            },
+        )
+        if response.status_code == 429:
+            wait_time = 10 * (attempt + 1)  # wait longer each retry: 10s, 20s, 30s
+            print(f"  Rate limited, waiting {wait_time}s before retry...")
+            time.sleep(wait_time)
+            continue
+        response.raise_for_status()
+        data = response.json()
+        return data["choices"][0]["message"]["content"]
 
-# -------------------------------------------------------------------
-# Step 2: "Tools" the agent can use
-# -------------------------------------------------------------------
-# In a real system these would call actual databases/APIs. Here, since we're
-# working with synthetic data, they simply look up extra info from our own
-# CSVs - but structurally, this is exactly how a real tool-calling agent
-# would be wired up.
+    raise RuntimeError("Failed after multiple retries due to rate limiting.")
+
+
+# Step2: tools that the agent can use
+
+
 
 def fetch_transaction_details(transaction_id, bank_df, company_df):
-    """Tool 1: pulls whatever info exists for this id from both sources."""
+
     bank_row = bank_df[bank_df["transaction_id"] == transaction_id]
     company_row = company_df[company_df["transaction_id"] == transaction_id]
     return {
@@ -65,8 +76,6 @@ def fetch_transaction_details(transaction_id, bank_df, company_df):
     }
 
 def check_payment_status(row):
-    """Tool 2: a simple heuristic status check based on the data we have.
-    (In a real system, this would call a live payment-status API.)"""
     if pd.isna(row.get("amount_bank")) or pd.isna(row.get("amount_company")):
         return "incomplete_record"
     diff = abs(row["amount_bank"] - row["amount_company"])
@@ -77,15 +86,9 @@ def check_payment_status(row):
     else:
         return "large_discrepancy"
 
-# -------------------------------------------------------------------
-# Step 3: The core reasoning call to the AI
-# -------------------------------------------------------------------
+# Step 3: The core reasoning call to the ai
+
 def investigate_exception(row, context, status):
-    """
-    Sends the case details to Gemini and asks it to reason about the
-    mismatch. We explicitly ask for structured JSON output so we can
-    parse it reliably (rather than free-form text).
-    """
     prompt = f"""
 You are a financial reconciliation assistant. Analyze this transaction exception
 and explain the most likely reason for it.
@@ -104,9 +107,9 @@ Respond ONLY with valid JSON in this exact format, no extra text:
   "cited_rule": "the specific logic/rule backing this conclusion, or 'none' if you cannot cite one"
 }}
 """
-    response_text = call_gemini(prompt)
+    response_text = call_llm(prompt)
 
-    # Clean up response in case Gemini wraps it in markdown code fences
+    
     text = response_text.strip()
     text = text.replace("```json", "").replace("```", "").strip()
 
@@ -119,9 +122,9 @@ Respond ONLY with valid JSON in this exact format, no extra text:
 
     return result
 
-# -------------------------------------------------------------------
-# Step 4: Routing decision (multi-factor, discussed earlier)
-# -------------------------------------------------------------------
+ 
+# Step 4: Routing decision 
+
 AMOUNT_RISK_THRESHOLD = 5000   # transactions above this always get a human look
 CONFIDENCE_THRESHOLD = 80
 
@@ -142,9 +145,9 @@ def decide_routing(ai_result, row):
     else:
         return "Needs Human Review"
 
-# -------------------------------------------------------------------
+
 # Step 5: Main pipeline
-# -------------------------------------------------------------------
+
 def main():
     bank_df = pd.read_csv("../data/bank_records.csv")
     company_df = pd.read_csv("../data/company_records.csv")
@@ -171,6 +174,8 @@ def main():
             "routing": routing,
         })
         print(f"{row['transaction_id']} | {row['category']} | confidence={ai_result.get('confidence')} | -> {routing}")
+
+        time.sleep(2.5)  
 
     results_df = pd.DataFrame(results)
     results_df.to_csv("../outputs/agent_results.csv", index=False)

@@ -1,93 +1,88 @@
 """
-Synthetic Data Generator for Reconciliation Agent
----------------------------------------------------
+Synthetic Data Generator 
 Generates two datasets: bank_records.csv and company_records.csv
 
 Approach: Hybrid
-  - 12 hand designed "tricky" cases (so we can explain each one specifically)
-  - 88 randomly generated records (for volume / scale)
-  Total: 100 transactions
+  -12 hand designed "tricky" cases
+  -88 randomly generated records (for volume / scale)
+  Total= 100 transactions
 """
 
 import pandas as pd
 import random
 
-# Fixed seed = every time we run this, we get the same random data
-# Interview flag to know: without this, our results would change every run,
-# making it impossible to reliably demo or debug. This is standard practice.
+#fixed seed = every time we run this we get the same random data
+# without this our results would change every run making it impossible to reliably demo or debug. This is standard practice.
 random.seed(42)
-
 bank_records = []
 company_records = []
 
-# -------------------------------------------------------------------
-# PART 1: Hardcoded tricky cases (designed on purpose, one by one)
-# -------------------------------------------------------------------
+# hrdcoded tricky cases 
 
-# Case 1: Perfect match
+# Case1: Perfect match
 bank_records.append({"transaction_id": "T1001", "amount": 1000, "date": "2026-01-01"})
 company_records.append({"transaction_id": "T1001", "amount": 1000, "date": "2026-01-01"})
 
-# Case 2: Missing from company records (bank has it, company doesn't)
+# Case2: Missing from company records (bank has it but the company doesn't)
 bank_records.append({"transaction_id": "T1002", "amount": 500, "date": "2026-01-01"})
-# (intentionally NOT added to company_records)
+# (intentionally not added to company_records)
 
-# Case 3: Missing from bank records (company has it, bank doesn't)
+# Case3: Missing from bank records (company has it but bank doesn't)
 company_records.append({"transaction_id": "T1003", "amount": 750, "date": "2026-01-02"})
-# (intentionally NOT added to bank_records)
+# (intentionally not added to bank_records)
 
-# Case 4: Fee deduction mismatch (small, explainable difference)
+# Case4: Fee deduction mismatch (small difference)
 bank_records.append({"transaction_id": "T1004", "amount": 980, "date": "2026-01-02"})
 company_records.append({"transaction_id": "T1004", "amount": 1000, "date": "2026-01-02"})
-# Bank shows 980 because a 20 rupee processing fee was deducted before settlement.
+# bank shows 980 because a 20 rupee processing fee was deducted before settlement
 
-# Case 5: Unexplained large mismatch (genuine problem, should flag for review)
+# Case5: Unexplained large mismatch (genuine problem and should flag for review)
 bank_records.append({"transaction_id": "T1005", "amount": 200, "date": "2026-01-03"})
 company_records.append({"transaction_id": "T1005", "amount": 1000, "date": "2026-01-03"})
 
-# Case 6: Duplicate transaction ID in company records (data entry error)
+# Case6: Duplicate transaction ID in company records (data entry error)
 company_records.append({"transaction_id": "T1006", "amount": 300, "date": "2026-01-03"})
 company_records.append({"transaction_id": "T1006", "amount": 300, "date": "2026-01-03"})
 bank_records.append({"transaction_id": "T1006", "amount": 300, "date": "2026-01-03"})
 
-# Case 7: Date mismatch (same id/amount, different date = delayed settlement)
+# Case7: Date mismatch (same id/amount but different date = delayed settlement)
 bank_records.append({"transaction_id": "T1007", "amount": 450, "date": "2026-01-05"})
 company_records.append({"transaction_id": "T1007", "amount": 450, "date": "2026-01-03"})
 
-# Case 8: Rounding difference (very small, should auto-resolve)
+# Case8: Rounding difference (very small and should auto-resolve)
 bank_records.append({"transaction_id": "T1008", "amount": 999.99, "date": "2026-01-04"})
 company_records.append({"transaction_id": "T1008", "amount": 1000, "date": "2026-01-04"})
 
-# Case 9: Large amount mismatch (tests amount-based risk gating)
+# Case9: Large amount mismatch (tests amount-based risk gating)
 bank_records.append({"transaction_id": "T1009", "amount": 48000, "date": "2026-01-04"})
 company_records.append({"transaction_id": "T1009", "amount": 50000, "date": "2026-01-04"})
 
-# Case 10: Partial refund scenario
+# Case10: Partial refund scenario
 bank_records.append({"transaction_id": "T1010", "amount": 700, "date": "2026-01-05"})
 company_records.append({"transaction_id": "T1010", "amount": 1000, "date": "2026-01-05"})
 # 300 was refunded, so bank shows the net amount
 
-# Case 11: Currency-style rounding (paisa-level noise)
+# Case11: Currency style rounding (paisa-level noise)
 bank_records.append({"transaction_id": "T1011", "amount": 250.50, "date": "2026-01-06"})
 company_records.append({"transaction_id": "T1011", "amount": 250.45, "date": "2026-01-06"})
 
-# Case 12: Duplicate in bank records this time (reverse of case 6)
+# Case12: Duplicate in bank records this time (reverse of case 6)
 bank_records.append({"transaction_id": "T1012", "amount": 600, "date": "2026-01-06"})
 bank_records.append({"transaction_id": "T1012", "amount": 600, "date": "2026-01-06"})
 company_records.append({"transaction_id": "T1012", "amount": 600, "date": "2026-01-06"})
 
-# -------------------------------------------------------------------
-# PART 2: Randomly generated records (for volume / scale)
-# -------------------------------------------------------------------
 
-next_id = 2000  # start IDs from T2000 onward to avoid clashing with hardcoded ones
+# Part 2: Randomly generated records (for volume)
+
+
+next_id = 2000  # start id is from T2000 onward to avoid clashing with hardcoded ones
 
 for i in range(88):
     txn_id = f"T{next_id + i}"
     base_amount = round(random.uniform(100, 5000), 2)
     date = f"2026-01-{random.randint(1, 28):02d}"
 
-    # Decide what "type" of record this will be (weighted probabilities)
+    # Decide what type of record this will be (weighted probabilities)
     outcome = random.choices(
         population=["clean_match", "small_fee_mismatch", "missing_one_side"],
         weights=[0.75, 0.15, 0.10],   # 75% clean, 15% small mismatch, 10% missing
@@ -110,9 +105,8 @@ for i in range(88):
         else:
             company_records.append({"transaction_id": txn_id, "amount": base_amount, "date": date})
 
-# -------------------------------------------------------------------
-# Save to CSV
-# -------------------------------------------------------------------
+
+# Save to csv file
 
 bank_df = pd.DataFrame(bank_records)
 company_df = pd.DataFrame(company_records)

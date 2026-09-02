@@ -6,21 +6,20 @@ transaction into one of 4 categories
     1. Perfect Match     -> same id, same amount, in both files
     2. Missing            -> id exists in only one file
     3. Amount Mismatch    -> same id, but different amount
-    4. Duplicate          -> same id appears more than once in a single file
+    4. Duplicate       -> same id appears more than once in a single file
 This is 100% deterministic (plain pandas) - no AI/LLM is used here
 This is intentional:matching numbers should never depend on an AI's guess
 """
 
 import pandas as pd
-# Load the data
+# loading the data
 
 bank_df = pd.read_csv("../data/bank_records.csv")
 company_df = pd.read_csv("../data/company_records.csv")
 print(f"Loaded {len(bank_df)} bank records and {len(company_df)} company records.\n")
 
-# Step2 = detect duplicates(before merging)
+# Step2 = detect duplicates before merging
 
-# 
 bank_duplicates = bank_df[bank_df.duplicated(subset="transaction_id", keep=False)]
 company_duplicates = company_df[company_df.duplicated(subset="transaction_id", keep=False)]
 

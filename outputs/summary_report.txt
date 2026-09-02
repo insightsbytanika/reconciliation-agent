@@ -1,0 +1,6 @@
+Total transactions: 102
+Perfect matches: 63 (61.8%)
+Exceptions: 39 (38.2%)
+Auto-resolved: 38 (97.4%)
+Needs human review: 1 (2.6%)
+Overall automation rate: 99.0%

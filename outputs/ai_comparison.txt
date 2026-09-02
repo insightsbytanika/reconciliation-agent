@@ -1,0 +1,6 @@
+WITH AI vs WITHOUT AI Comparison
+========================================
+Without AI - overall automation rate: 61.8%
+With AI - overall automation rate: 99.0%
+Improvement: +37.3 percentage points
+Exceptions auto-resolved by AI: 38 out of 39
