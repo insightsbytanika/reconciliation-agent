@@ -80,4 +80,4 @@ with tab2:
             flagged_df[["transaction_id", "category", "amount_bank", "amount_company", "likely_reason", "confidence"]],
             use_container_width=True
         )
-        st.caption("These cases were intentionally NOT auto-resolved — either confidence was low, the amount was large, or no concrete reason could be cited.")
+        st.caption("These cases were intentionally NOT auto-resolved either confidence was low, the amount was large, or no concrete reason could be cited.")
