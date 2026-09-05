@@ -8,7 +8,7 @@ import pandas as pd
 
 st.set_page_config(page_title="Reconciliation Agent", layout="wide")
 
-st.title("AI Reconciliation Agent — Results Dashboard")
+st.title("AI Reconciliation Agent - Results Dashboard")
 st.caption("Deterministic matching + AI-driven exception reasoning, with human-in-the-loop safety routing")
 
 # load data
@@ -43,7 +43,7 @@ comparison_df = pd.DataFrame({
 st.bar_chart(comparison_df.set_index("Scenario"))
 st.caption(
     f"Without AI, only clean matches are handled automatically ({without_ai_rate:.1f}%). "
-    f"With AI reasoning on exceptions, that rises to {automation_rate:.1f}% — "
+    f"With AI reasoning on exceptions, that rises to {automation_rate:.1f}%  "
     f"a +{automation_rate - without_ai_rate:.1f} point improvement."
 )
 
