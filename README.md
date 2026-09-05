@@ -1,93 +1,62 @@
 # Reconciliation Agent
 
-AI Finance Controller track
-An AI-powered financial reconciliation system that matches transactions across two data sources, reasons about why exceptions happen, and decides which ones it can safely resolve on its own versus which ones need a human. Built with Python, pandas, an AI agent for exception handling and reasoning (Groq API, LLM inference), confidence-scored decision routing, and a Streamlit dashboard.
+AI Finance Controller track.
 
-I built this the way I'd build anything meant to touch real money: keep the parts that can silently fail on numbers deterministic, and only let AI make judgment calls that can actually be checked.
+Most reconciliation tools can tell you that two numbers don't match. Almost none of them can tell you why, or whether it's safe to fix that mismatch without a person looking at it first. That gap is what this project is actually about, and this README walks through how it got built, what it does well, and exactly where it broke along the way.
 
-Core idea: the AI proposes, deterministic code disposes. The model never touches a number, no matching, no totals, no amount comparisons. It only answers "why did this happen, and how sure am I." Matching and arithmetic are 100% plain, auditable pandas code. If an AI label is wrong, it's obvious on review. If an AI-computed number is wrong, it can sit quietly in a ledger for months. So the model stays away from numbers entirely.
+This is an AI agent that reconciles transactions between a bank's records and a company's internal ledger, figures out why the two disagree when they do, and decides, with real safety checks, which cases it can resolve on its own versus which ones need a human. It's built with Python, pandas, an LLM-based agent running on the Groq API, confidence-scored routing, and a Streamlit dashboard on top.
 
-## Results: with AI vs. without AI
+I built it around one rule I kept coming back to: the AI proposes, deterministic code disposes. The model never touches a number. No matching. No totals. No amount comparisons. Its only job is judgment: why did this happen, and how sure am I about that. If it gets a reason wrong, I catch that in the time it takes to read it. A wrong number is different. That mistake could sit quietly in a ledger for months before anyone noticed.
 
-Tested on 102 synthetic transactions (63 clean matches, 39 exceptions).
+## The results
 
-| Metric | Without AI (matching only) | With AI (agent + routing) |
+I tested this on 102 synthetic transactions, 63 that matched cleanly and 39 that didn't.
+
+| Metric | Without AI | With AI |
 |---|---|---|
 | Overall automation rate | 61.8% | 99.0% |
-| Exceptions auto-resolved | 0 of 39 (0%) | 38 of 39 (97.4%) |
-| Exceptions needing human review | 39 of 39 (100%) | 1 of 39 (2.6%) |
+| Exceptions auto-resolved | 0 of 39 | 38 of 39 |
+| Exceptions sent for human review | 39 of 39 | 1 of 39 |
 
-That's a 37.3 percentage point gain in automation, and a direct, measured accuracy improvement from adding AI reasoning on top of deterministic matching.
+That's a 37.3 point jump in automation, and it's a measured number, not a guess. Without AI, the matching engine tells you something's wrong and stops there. Every one of those 39 cases would need a person to dig in manually. With the agent reasoning over each one, 38 got resolved with a stated, checkable reason. The one that didn't was a ₹48,000 mismatch, correctly held back for human review. Not because the model was confused, but because the amount alone was enough to warrant a second look regardless of how confident it sounded.
 
-Without AI, the matching engine can tell you that something's wrong, but not why, and not whether it's safe to resolve without a person looking. With the agent reasoning over each exception, 38 of 39 cases were confidently and safely auto-resolved. The one that wasn't, a ₹48,000 mismatch, was correctly routed to a human, because it failed two of the three safety checks (moderate confidence, and an amount above the risk threshold) even though the agent had a plausible explanation for it.
+## Why this problem
 
-## Problem taste
+Reconciliation doesn't scale by adding more analysts, it scales by shrinking what actually needs one. The interesting problem here was never "detect the mismatch," plain code has always been able to do that. It was figuring out which mismatches are actually safe to close out without a human, and proving that number instead of just asserting it.
 
-Reconciliation, matching transactions between two systems that are supposed to agree and usually don't, is one of the most repetitive, error-prone jobs in finance operations. It doesn't scale by hiring more analysts, it scales by shrinking what actually needs one. The problem here isn't "detect mismatches," plain code already does that. It's figuring out, safely and measurably, which mismatches can be resolved without a human, and proving that number instead of just asserting it.
+## How it's built
 
-## Build quality
+The pipeline is split into stages that each do one job and don't overlap:
 
-Every stage is its own module: data generation, deterministic matching, agent reasoning, routing, summary reporting, AI-impact comparison, and a dashboard. Not one script doing everything.
+`generate_data.py` builds the synthetic bank and company records, about a hundred transactions with deliberate, realistic mismatches worked in, fee deductions, settlement delays, duplicate entries, partial refunds, rounding noise.
 
-Every stage writes a plain CSV to `outputs/`, so any step can be inspected, re-run, or debugged on its own.
+`matching.py` is the deterministic layer. Plain pandas, exact ID and amount matching, no model involved anywhere in it. It classifies every transaction as a clean match, a missing entry, an amount mismatch, or a duplicate.
 
-No hardcoded secrets. The API key lives in `.env`, which is gitignored, and I checked it never made it into version control.
+`agent.py` is where the AI comes in, and only for the exceptions the matcher couldn't close on its own. It calls tools to pull transaction context and check payment status, asks the model to reason about the likely cause, and gets back a structured verdict: a reason, a confidence score, and a cited justification. That output feeds a routing decision, not a final one, more on that below.
 
-The full pipeline runs end to end, unattended, on synthetic data: five commands, no manual steps in between.
+`report.py` and `compare_ai.py` generate the summary numbers and the with-AI-versus-without-AI comparison above.
 
-Rate limiting and transient API failures are handled with retry-with-backoff instead of being left to crash the run.
+`dashboard.py` is a Streamlit app for browsing all of this visually instead of reading raw CSVs.
 
-## AI judgment
+Full breakdown of the agent's tools and exactly what it is and isn't allowed to decide is in `AGENT.md`.
 
-AI does exactly one job here: reason about why a flagged exception happened, and how confident that reasoning is. It's never used for matching, totals, or arithmetic of any kind. That stays in deterministic pandas code on purpose, because a wrong AI-computed number is a silent failure, while a wrong AI reason gets caught the moment someone reads it.
+## Why the agent doesn't get the final say
 
-Even within its one job, the model doesn't get the final say. A case only auto-resolves if all three of these hold:
+A model can sound just as confident about a ₹15 rounding error as it can about a ₹40,000 discrepancy, confidence measures how sure the reasoning is, not how expensive it would be if that reasoning turns out wrong. So a case only auto-resolves here if three separate things hold at once: confidence at 80 or above, a transaction amount under ₹5,000, and an actual cited reason rather than a shrug. Miss any one of those and it goes to a person instead, no exceptions carved out for a model that "seems sure." This is the same shape reconciliation automation runs at in production at real scale, automate the confident majority, keep a human for anything genuinely uncertain or expensive to get wrong.
 
-| Check | Threshold | Why it's there |
-|---|---|---|
-| Confidence | 80 or above | The model has to actually stand behind its own explanation |
-| Transaction amount | Under ₹5,000 | A ₹15 rounding gap and a ₹40,000 gap aren't the same risk, even at equal confidence |
-| Cited reason | Must be concrete, not "none" | If the model can't point to something specific, it doesn't get to act alone |
+## What actually broke
 
-Fail any one of those and the case goes to human review instead, no exceptions. This mirrors how reconciliation automation actually runs in production at scale (HighRadius, Numeric): automate the confident majority, keep a human in the loop for anything genuinely uncertain or high-stakes.
+The pipeline runs clean now. It didn't start that way.
 
-## Failure recovery
+The routing logic almost shipped with exactly the flaw described above, a single confidence check deciding everything. I caught it before it mattered, but only because I stopped to ask what "confident" was actually protecting against, and realized the answer was "not much, on its own."
 
-The finished pipeline runs cleanly end to end now, but it didn't start that way. Four real problems came up along the way, two in the design and two in the infrastructure.
+Then the numbers themselves threw me off for a bit. I'd built the synthetic dataset to land around 75% clean matches, and the first full run came back at 61.8% instead. For a few minutes I assumed the matching code had a bug. It didn't. About a dozen of the transactions were hand-built edge cases I'd deliberately skewed toward messy scenarios, because the point of building them by hand was to stress specific failure types rather than represent the whole set fairly. Once I remembered that, the number made complete sense. My assumption about what "correct" should have looked like was the thing that needed fixing, not the code.
 
-The routing logic almost shipped with a single point of failure. My first pass just checked one thing: was the model confident or not. That's an easy bug to miss, because a model can sound just as sure about a ₹15 rounding difference as it does about a ₹40,000 discrepancy. Confidence tells you how sure the reasoning is, not how expensive it would be if that reasoning is wrong. So I split the check into three: confidence, transaction size, and whether the model actually cited something concrete. All three have to clear before anything auto-resolves; otherwise it goes to a person.
+The auto-resolve rate made me suspicious too, for the opposite reason. Thirty-eight out of thirty-nine sounds like either a system working exactly as intended, or one quietly rubber-stamping everything and calling it confidence. I didn't trust the summary stats enough to just accept the number, so I went and checked the one case I'd built specifically to be risky by hand, the ₹48,000 one, and confirmed it landed in human review for the right stated reason. That single manual check is the difference between a number that looks good and one that's actually earned.
 
-Then there was a number that looked wrong but wasn't. I'd built the dataset to land around 75% clean matches, and the first full run came back at 61.8%. For a few minutes I assumed the matching logic had a bug. It didn't. About a dozen of the transactions were hand-built edge cases, deliberately skewed toward messy scenarios because their whole point was stress-testing specific failure types, not being a representative sample. Once I accounted for that, the number made sense. Nothing needed fixing except my assumption about what "correct" should look like.
+The rest was ordinary infrastructure pain. `google-generativeai` hung forever on import under Python 3.14, somewhere in its dependency chain through grpc and protobuf, so I dropped the SDK entirely and called the REST endpoint directly instead. That fixed the hang, but every request then came back with a 404, which turned out to be two separate problems stacked on top of each other, a key format migration Google had rolled out in June, and a model version that had already been deprecated underneath me. After patching both and still hitting dead ends, I moved off Gemini entirely and switched to Groq, which uses a plainer, more stable API surface. Groq then rate-limited me partway through a batch of calls, so I added a short delay between requests and a retry with backoff for anything that came back 429. None of these were interesting problems in isolation, they were just the normal cost of building against real APIs instead of a spec sheet.
 
-The auto-resolve rate came back suspiciously high too. Thirty-eight of thirty-nine exceptions got auto-resolved, which is either a system working as intended or a system quietly rubber-stamping everything. I couldn't tell from the summary stats alone, so I went and checked the one case I'd specifically built to be risky, a ₹48,000 mismatch, by hand. It came back correctly routed to human review, and for the right reason. That one manual check is what turned "this looks fine" into "this is actually working."
-
-The rest of the failures were plain infrastructure pain. `google-generativeai` hung forever on import under Python 3.14, somewhere down its dependency chain through grpc and protobuf, so I dropped the SDK and hit the REST endpoint directly with `requests` instead. That fixed the hang, but every call then came back `404`, which turned out to be two separate issues stacked together: a June 2026 key format change on Google's end, and a model version that had already been deprecated. After patching both and still hitting dead ends, I gave up on Gemini and moved to Groq, which uses a plainer, more stable API. Groq then rate-limited me 37 calls into a 39-call batch, so I added a short delay between requests and a retry with backoff for anything that came back `429`. None of these were interesting problems on their own, they were just the ordinary cost of building against real APIs instead of a spec sheet.
-
-## Architecture
-
-```
-Inputs                     Deterministic layer            Agent layer (judgment)       Outputs
-bank_records.csv     -->   Matching engine            -->  Reasoning agent        -->   resolved matches
-company_records.csv        (exact-id + amount              (LLM, confidence             + audit trail
-                             matching, no LLM,               score, may abstain)    -->   human-review queue
-                             fully reproducible)                    ^                     (low confidence,
-                        --> exceptions only ---------------  tools: fetch txn,            large amount, or
-                                                              check status                 no clear reason)
-                                                                                      -->   summary report
-```
-
-Only exceptions, missing entries, amount mismatches, duplicates, ever reach the agent. Clean matches never touch the model.
-
-| File | Role |
-|---|---|
-| `src/generate_data.py` | Synthesizes bank and company records (100+ transactions) with deliberate, realistic mismatches: fee deductions, settlement delays, duplicates, partial refunds, rounding noise |
-| `src/matching.py` | Deterministic matching engine (pandas merge). Classifies every transaction as a perfect match, missing entry, amount mismatch, or duplicate. No AI involved. |
-| `src/agent.py` | The reasoning agent. Uses tool calls to fetch transaction details and check payment status, prompts an LLM for a structured JSON verdict (reason, confidence, cited rule), and applies the three-factor routing decision |
-| `src/report.py` | Generates the summary report and an honest, itemized exception list |
-| `src/compare_ai.py` | Produces the with-AI vs. without-AI automation rate comparison |
-| `src/dashboard.py` | Streamlit dashboard with live metrics, the AI-impact chart, and a browsable breakdown of every auto-resolved and flagged case |
-
-## Quickstart
+## Running it
 
 ```bash
 pip install -r requirements.txt
@@ -100,10 +69,12 @@ python src/compare_ai.py
 streamlit run src/dashboard.py
 ```
 
-Matching and reporting run fully offline. The agent step calls an LLM API, add `GROQ_API_KEY=...` to a `.env` file to run it live.
+Matching and reporting run fully offline, no API needed. The agent step calls an LLM, add `GROQ_API_KEY=...` to a `.env` file to run it live.
 
-Tech stack: Python, pandas, Groq API for LLM inference, REST calls via `requests`, Streamlit, python-dotenv. Techniques used: deterministic rule-based matching, LLM-based reasoning with structured JSON output, tool-calling, confidence scoring, multi-factor human-in-the-loop routing, retry-with-backoff for rate limit resilience.
+Stack: Python, pandas, Groq for LLM inference, plain REST calls via `requests`, Streamlit, python-dotenv. Techniques: deterministic rule-based matching, LLM reasoning with structured JSON output, tool-calling, confidence scoring, multi-factor human-in-the-loop routing, retry-with-backoff for rate limit handling.
 
-## Status
+## Where things stand
 
-End to end pipeline complete and verified. Data generation, deterministic matching, AI-driven exception reasoning, confidence-based routing, reporting, AI-impact measurement, and dashboard visualization are all working, tested, and reproducible from a clean environment.
+Everything above is built, tested, and reproducible from a clean environment: data generation, deterministic matching, the reasoning agent, confidence-based routing, reporting, the AI-impact comparison, and the dashboard. See `AGENT.md` for the detailed breakdown of what the agent can and can't decide on its own.
+
+Back to where this started: the gap wasn't in detecting mismatches, that part was never hard. It was in getting a system to explain itself well enough that a human doesn't have to double-check everything anyway. The 99% automation number is what that gap actually closing looks like, measured, not assumed.
